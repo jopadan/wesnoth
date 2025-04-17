@@ -20,6 +20,7 @@
 #include "color.hpp"
 #include "desktop/battery_info.hpp"
 #include "font/pango/escape.hpp"
+#include "font/standard_colors.hpp"
 #include "formatter.hpp"
 #include "formula/string_utils.hpp"
 #include "gettext.hpp"
@@ -429,7 +430,7 @@ static config unit_abilities(const unit* u, const map_location& loc)
 		if(active[i]) {
 			str << display_name;
 		} else {
-			str << span_color(font::inactive_ability_color, display_name);
+			str << span_color(font::INACTIVE_COLOR, display_name);
 		}
 
 		if(i + 1 != abilities_size) {
@@ -1006,7 +1007,7 @@ static int attack_info(const reports::context& rc, const attack_type &at, config
 			const t_string &name = specials[i].first;
 			const t_string &description = specials[i].second;
 			const color_t &details_color =
-				active[i] ? font::weapon_details_color : font::inactive_details_color;
+				active[i] ? font::weapon_details_color : font::INACTIVE_COLOR;
 
 			str << span_color(details_color, "  ", "  ", name) << '\n';
 			std::string help_page = "weaponspecial_" + name.base_str();
@@ -1171,9 +1172,9 @@ static config unit_weapons(const reports::context& rc, const unit_const_ptr& att
  * Display the attacks of the displayed unit against the unit passed as argument.
  * 'hex' is the location the attacker will be at during combat.
  */
-static config unit_weapons(const reports::context& rc, const unit *u, const map_location &hex)
+static config unit_weapons(const reports::context& rc, const unit* u, const map_location& hex)
 {
-	config res = config();
+	config res;
 	if ((u != nullptr) && (!u->attacks().empty())) {
 		const std::string attack_headline = _n("Attack", "Attacks", u->attacks().size());
 
@@ -1189,7 +1190,7 @@ static config unit_weapons(const reports::context& rc, const unit *u, const map_
 				_("This unit can attack multiple times per turn."));
 		}
 
-		for (const attack_type &at : u->attacks())
+		for (const attack_type& at : u->attacks())
 		{
 			attack_info(rc, at, res, *u, hex);
 		}

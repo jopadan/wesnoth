@@ -405,8 +405,14 @@ auto parse_attributes(const config::const_child_itors& range)
 			continue;
 		}
 
-		const unsigned start = attr["start"].to_int(0);
-		const unsigned end = attr["end"].to_int(/* text.size() */); // TODO: do we need to restore this default?
+		const unsigned start = attr["start"].to_int(PANGO_ATTR_INDEX_FROM_TEXT_BEGINNING);
+		const unsigned end = attr["end"].to_int(PANGO_ATTR_INDEX_TO_TEXT_END);
+
+		// Attributes with start == end set won't do anything, so skip
+		if (start == end) {
+			WRN_GUI_D << "attribute " << name << " has equal start and end indices, will not be added.";
+			continue;
+		}
 
 		if (name == "color" || name == "fgcolor" || name == "foreground") {
 			add_attribute_fg_color(text_attributes, start, end, attr["value"].empty() ? font::NORMAL_COLOR : font::string_to_color(attr["value"]));
@@ -426,6 +432,10 @@ auto parse_attributes(const config::const_child_itors& range)
 			add_attribute_style(text_attributes, start, end, PANGO_STYLE_ITALIC);
 		} else if (name == "underline" || name == "u") {
 			add_attribute_underline(text_attributes, start, end, PANGO_UNDERLINE_SINGLE);
+		} else if (name == "line_height") {
+			add_attribute_line_height(text_attributes, start, end, attr["value"].to_double());
+		} else if (name == "image") { // An inline image that behave as a custom text glyph
+			add_attribute_image_shape(text_attributes, start, end, attr["value"]);
 		} else {
 			// Unsupported formatting or normal text
 			add_attribute_weight(text_attributes, start, end, PANGO_WEIGHT_NORMAL);
@@ -444,18 +454,19 @@ text_shape::text_shape(const config& cfg, wfl::action_function_symbol_table& fun
 	, font_size_(cfg["font_size"], font::SIZE_NORMAL)
 	, font_style_(decode_font_style(cfg["font_style"]))
 	, text_alignment_(cfg["text_alignment"])
-	, color_(cfg["color"])
+	, color_(cfg["color"], font::NORMAL_COLOR)
 	, text_(cfg["text"])
 	, parse_text_as_formula_(cfg["parse_text_as_formula"].to_bool(true))
 	, text_markup_(cfg["text_markup"], false)
 	, link_aware_(cfg["text_link_aware"], false)
-	, link_color_(cfg["text_link_color"], color_t::from_hex_string("ffff00"))
+	, link_color_(cfg["text_link_color"], font::YELLOW_COLOR)
 	, maximum_width_(cfg["maximum_width"], -1)
 	, characters_per_line_(cfg["text_characters_per_line"].to_unsigned())
 	, maximum_height_(cfg["maximum_height"], -1)
 	, highlight_start_(cfg["highlight_start"])
 	, highlight_end_(cfg["highlight_end"])
 	, highlight_color_(cfg["highlight_color"], color_t::from_hex_string("215380"))
+	, line_spacing_(cfg["line_spacing"].to_int(-1))
 	, outline_(cfg["outline"], false)
 	, actions_formula_(cfg["actions"], &functions)
 	, text_attributes_(parse_attributes(cfg.child_range("attribute")))
@@ -500,7 +511,8 @@ void text_shape::draw(wfl::map_formula_callable& variables)
 		.set_link_color(link_color_(variables))
 		.set_text(text, text_markup_(variables));
 
-	text_renderer.set_family_class(font_family_)
+	text_renderer
+		.set_family_class(font_family_)
 		.set_font_size(font_size_(variables))
 		.set_font_style(font_style_)
 		.set_alignment(text_alignment_(variables))
@@ -513,6 +525,9 @@ void text_shape::draw(wfl::map_formula_callable& variables)
 		.set_characters_per_line(characters_per_line_)
 		.set_add_outline(outline_(variables));
 
+	if (line_spacing_ > -1) { // why? -1 = don't set and 0 and greater are valid values
+		text_renderer.set_line_spacing(line_spacing_);
+	}
 	// Do this last so it can merge with attributes from markup
 	text_renderer.apply_attributes(text_attributes_);
 

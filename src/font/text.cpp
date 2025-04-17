@@ -43,6 +43,31 @@ static lg::log_domain log_font("font");
 
 namespace font
 {
+
+namespace
+{
+void render_image_shape(cairo_t *cr, PangoAttrShape *pShape, int /* do_path */, void* /* data */)
+{
+	// NOTE: this data is owned by the underlying SDL_Surface. See add_attribute_image_shape
+	cairo_surface_t *img = static_cast<cairo_surface_t*>(pShape->data);
+
+	cairo_rel_move_to (cr,
+		pShape->ink_rect.x/PANGO_SCALE,
+		pShape->ink_rect.y/PANGO_SCALE);
+	double x, y;
+	cairo_get_current_point (cr, &x, &y);
+	cairo_translate (cr, x, y);
+
+	cairo_set_source_surface(cr, img, 0, 0);
+	cairo_rectangle(cr,
+		0,
+		0,
+		pShape->ink_rect.width/PANGO_SCALE,
+		pShape->ink_rect.height/PANGO_SCALE);
+	cairo_fill(cr);
+}
+}
+
 pango_text::pango_text()
 	: context_(pango_font_map_create_context(pango_cairo_font_map_get_default()), g_object_unref)
 	, layout_(pango_layout_new(context_.get()), g_object_unref)
@@ -73,6 +98,8 @@ pango_text::pango_text()
 	pango_layout_set_ellipsize(layout_.get(), ellipse_mode_);
 	pango_layout_set_alignment(layout_.get(), alignment_);
 	pango_layout_set_wrap(layout_.get(), PANGO_WRAP_WORD_CHAR);
+
+	// TODO: phase this out in favor of a global line height attribute.
 	pango_layout_set_line_spacing(layout_.get(), get_line_spacing_factor());
 
 	cairo_font_options_t *fo = cairo_font_options_create();
@@ -82,6 +109,8 @@ pango_text::pango_text()
 
 	pango_cairo_context_set_font_options(context_.get(), fo);
 	cairo_font_options_destroy(fo);
+
+	pango_cairo_context_set_shape_renderer(context_.get(), render_image_shape, nullptr, nullptr);
 }
 
 texture pango_text::render_texture(const SDL_Rect& viewport)
@@ -156,10 +185,8 @@ unsigned pango_text::insert_text(const unsigned offset, const std::string& text,
 	return len;
 }
 
-point pango_text::get_cursor_position(const unsigned column, const unsigned line) const
+unsigned pango_text::get_byte_index(const unsigned offset, const unsigned line) const
 {
-	recalculate();
-
 	// Determing byte offset
 	std::unique_ptr<PangoLayoutIter, std::function<void(PangoLayoutIter*)>> itor(
 		pango_layout_get_iter(layout_.get()), pango_layout_iter_free);
@@ -168,7 +195,7 @@ point pango_text::get_cursor_position(const unsigned column, const unsigned line
 	if(line != 0) {
 
 		if(static_cast<int>(line) >= pango_layout_get_line_count(layout_.get())) {
-			return point(0, 0);
+			return 0;
 		}
 
 		for(std::size_t i = 0; i < line; ++i) {
@@ -177,28 +204,32 @@ point pango_text::get_cursor_position(const unsigned column, const unsigned line
 	}
 
 	// Go the wanted column.
-	for(std::size_t i = 0; i < column; ++i) {
+	for(std::size_t i = 0; i < offset; ++i) {
 		if(!pango_layout_iter_next_char(itor.get())) {
 			// It seems that the documentation is wrong and causes and off by
 			// one error... the result should be false if already at the end of
 			// the data when started.
-			if(i + 1 == column) {
+			if(i + 1 == offset) {
 				break;
 			}
 			// Beyond data.
-			return point(0, 0);
+			return 0;
 		}
 	}
 
 	// Get the byte offset
-	const int offset = pango_layout_iter_get_index(itor.get());
+	return pango_layout_iter_get_index(itor.get());
+}
 
-	return get_cursor_pos_from_index(offset);
+point pango_text::get_cursor_position(const unsigned offset, const unsigned line) const
+{
+	recalculate();
+	return get_cursor_pos_from_index(get_byte_index(offset, line));
 }
 
 point pango_text::get_cursor_pos_from_index(const unsigned offset) const
 {
-	// Convert the byte offset in a position.
+	// Convert the byte offset to a position.
 	PangoRectangle rect;
 	pango_layout_get_cursor_pos(layout_.get(), offset, &rect, nullptr);
 
@@ -570,15 +601,6 @@ PangoRectangle pango_text::calculate_size(PangoLayout& layout) const
 	p_font font{ get_font_families(font_class_), font_size_, font_style_ };
 	pango_layout_set_font_description(&layout, font.get());
 
-	if(font_style_ & pango_text::STYLE_UNDERLINE) {
-		PangoAttrList *attribute_list = pango_attr_list_new();
-		pango_attr_list_insert(attribute_list
-			, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
-
-		pango_layout_set_attributes(&layout, attribute_list);
-		pango_attr_list_unref(attribute_list);
-	}
-
 	int maximum_width = 0;
 	if(characters_per_line_ != 0) {
 		PangoFont* f = pango_font_map_load_font(
@@ -747,6 +769,12 @@ void pango_text::render(PangoLayout& layout, const SDL_Rect& viewport)
 		foreground_color_.b / 255.0,
 		foreground_color_.a / 255.0
 	);
+
+	if(font_style_ & pango_text::STYLE_UNDERLINE) {
+		font::attribute_list list;
+		list.insert(pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
+		apply_attributes(list);
+	}
 
 	pango_cairo_show_layout(cr, &layout);
 }
